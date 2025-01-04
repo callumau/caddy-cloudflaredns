@@ -1,3 +1,5 @@
+ARG CADDY_VERSION
+
 # Stage 1: Build Caddy with the Cloudflare DNS plugin
 FROM caddy:builder AS builder
 
