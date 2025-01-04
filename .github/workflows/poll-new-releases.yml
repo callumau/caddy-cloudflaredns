@@ -25,9 +25,9 @@ jobs:
         id: check_current_tag
         run: |
           if curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://ghcr.io/v2/OWNER/REPO/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"' > /dev/null 2>&1; then
+            https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"' > /dev/null 2>&1; then
             current_tag=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              https://ghcr.io/v2/OWNER/REPO/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"')
+              https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"')
           else
             current_tag="none"
           fi
@@ -39,15 +39,15 @@ jobs:
           echo "New release detected: ${{ env.latest_tag }}"
           docker build \
             --build-arg CADDY_VERSION=${{ env.latest_tag }} \
-            -t ghcr.io/OWNER/REPO/caddy:${{ env.latest_tag }} \
-            -t ghcr.io/OWNER/REPO/caddy:latest .
+            -t ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }} \
+            -t ghcr.io/callumau/caddy-cloudflare/caddy:latest .
 
       - name: Push New Image to GHCR
         if: env.latest_tag != env.current_tag
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u USERNAME --password-stdin
-          docker push ghcr.io/OWNER/REPO/caddy:${{ env.latest_tag }}
-          docker push ghcr.io/OWNER/REPO/caddy:latest
+          docker push ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }}
+          docker push ghcr.io/callumau/caddy-cloudflare/caddy:latest
 
       - name: No New Release Detected
         if: env.latest_tag == env.current_tag
