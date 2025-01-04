@@ -18,8 +18,17 @@ jobs:
         run: |
           latest_release=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest)
           echo "$latest_release" > release.json
-          tag_name=$(jq -r '.tag_name' release.json)
-          echo "latest_tag=$tag_name" >> $GITHUB_ENV
+
+          # Extract the tag name
+          raw_tag=$(jq -r '.tag_name' release.json)
+          echo "Raw tag: $raw_tag"
+
+          # Remove the 'v' prefix if present and strip trailing '.0'
+          processed_tag=$(echo "$raw_tag" | sed -E 's/^v//; s/\.0$//')
+          echo "Processed tag: $processed_tag"
+
+          # Save to environment variable
+          echo "latest_tag=$processed_tag" >> $GITHUB_ENV
 
       - name: Check Current Container Tag
         id: check_current_tag
