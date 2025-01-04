@@ -2,7 +2,7 @@ name: Build and Push Custom Caddy Container
 
 on:
   schedule:
-    - cron: "1 0 * * *" # Runs every 15 minutes
+    - cron: "1 0 * * *" # Runs once a day
   workflow_dispatch: # Allows manual trigger
 
 jobs:
@@ -10,54 +10,110 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Check Out Repository
       - name: Check Out Repository
         uses: actions/checkout@v3
+        with:
+          persist-credentials: false # Prevents default GITHUB_TOKEN from being used for push
+          fetch-depth: 0 # Fetch all history for git commands
 
+      # 2. Set Up Git for Committing
+      - name: Set Up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 3. Fetch Latest Caddy Release
       - name: Fetch Latest Caddy Release
         id: fetch_release
         run: |
+          # Fetch the latest release from Caddy
           latest_release=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest)
           echo "$latest_release" > release.json
 
-          # Extract the tag name
+          # Extract the raw tag (e.g., "v2.9.0")
           raw_tag=$(jq -r '.tag_name' release.json)
           echo "Raw tag: $raw_tag"
 
-          # Remove the 'v' prefix if present and strip trailing '.0'
+          # Process the tag: remove 'v' and strip trailing '.0' if present
           processed_tag=$(echo "$raw_tag" | sed -E 's/^v//; s/\.0$//')
           echo "Processed tag: $processed_tag"
 
-          # Save to environment variable
+          # Validate that the processed tag is not empty
+          if [[ -z "$processed_tag" ]]; then
+            echo "Error: Processed tag is empty."
+            exit 1
+          fi
+
+          # Export the processed tag to an environment variable
           echo "latest_tag=$processed_tag" >> $GITHUB_ENV
 
-      - name: Check Current Container Tag
-        id: check_current_tag
+      # 4. Read Last Built Tag
+      - name: Read Last Built Tag
+        id: read_last_tag
         run: |
-          if curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"' > /dev/null 2>&1; then
-            current_tag=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"')
+          if [ -f ".last_release_tag" ]; then
+            last_tag=$(cat .last_release_tag)
+            echo "Last built tag: $last_tag"
+            echo "last_tag=$last_tag" >> $GITHUB_ENV
           else
-            current_tag="none"
+            echo "Last built tag not found."
+            echo "last_tag=" >> $GITHUB_ENV
           fi
-          echo "current_tag=$current_tag" >> $GITHUB_ENV
 
-      - name: Compare Tags and Build New Image
-        if: env.latest_tag != env.current_tag
+      # 5. Compare Tags to Determine if a New Release Exists
+      - name: Compare Tags
+        id: compare_tags
         run: |
-          echo "New release detected: ${{ env.latest_tag }}, old release ${{ env.current_tag }}"
+          if [ "${{ env.latest_tag }}" != "${{ env.last_tag }}" ]; then
+            echo "new_release=true" >> $GITHUB_ENV
+          else
+            echo "new_release=false" >> $GITHUB_ENV
+          fi
+
+      # 6. Debugging Information (Optional)
+      - name: Debug Tags
+        run: |
+          echo "Latest tag: ${{ env.latest_tag }}"
+          echo "Last built tag: ${{ env.last_tag }}"
+          echo "New release: ${{ env.new_release }}"
+
+      # 7. Build the Docker Image if a New Release is Detected
+      - name: Build New Image
+        if: env.new_release == 'true'
+        run: |
+          echo "Building Docker image with CADDY_VERSION=${{ env.latest_tag }}"
           docker build \
             --build-arg CADDY_VERSION=${{ env.latest_tag }} \
             -t ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }} \
             -t ghcr.io/callumau/caddy-cloudflare/caddy:latest .
 
+      # 8. Log in to GHCR
+      - name: Log in to GHCR
+        if: env.new_release == 'true'
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Use GHCR_PAT if using a PAT
+
+      # 9. Push the Docker Image to GHCR
       - name: Push New Image to GHCR
-        if: env.latest_tag != env.current_tag
+        if: env.new_release == 'true'
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u USERNAME --password-stdin
           docker push ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }}
           docker push ghcr.io/callumau/caddy-cloudflare/caddy:latest
 
+      # 10. Update the Last Built Tag File
+      - name: Update Last Built Tag
+        if: env.new_release == 'true'
+        run: |
+          echo "${{ env.latest_tag }}" > .last_release_tag
+          git add .last_release_tag
+          git commit -m "Update last_release_tag to ${{ env.latest_tag }}"
+          git push origin HEAD:main # Replace 'main' with your default branch if different
+
+      # 11. Handle No New Release Scenario
       - name: No New Release Detected
-        if: env.latest_tag == env.current_tag
+        if: env.new_release != 'true'
         run: echo "No new release detected. Skipping build and push."
