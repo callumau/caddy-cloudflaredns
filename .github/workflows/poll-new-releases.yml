@@ -35,6 +35,16 @@ jobs:
           latest_release=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest)
           echo "$latest_release" > release.json
 
+          # Extract the prerelease status
+          is_prerelease=$(jq -r '.prerelease' release.json)
+          echo "is_prerelease=$is_prerelease" >> $GITHUB_ENV
+      
+          if [ "$is_prerelease" = "true" ]; then
+            echo "The latest release is a pre-release. Skipping build and push."
+            echo "new_release=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
           # Extract the raw tag (e.g., "v2.9.0")
           raw_tag=$(jq -r '.tag_name' release.json)
           echo "Raw tag: $raw_tag"
@@ -81,6 +91,7 @@ jobs:
           echo "Latest tag: ${{ env.latest_tag }}"
           echo "Last built tag: ${{ env.last_tag }}"
           echo "New release: ${{ env.new_release }}"
+          echo "Is pre-release: ${{ env.is_prerelease }}"
 
       # 7. Build the Docker Image if a New Release is Detected
       - name: Build New Image
