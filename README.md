@@ -1,6 +1,6 @@
 # Caddy + Cloudflare DNS Validation
 
-Uses [Cloudflare](https://github.com/caddy-dns/cloudflare) Caddy DNS plugin to automatically build a packaged docker container on a new release of Caddy.
+Uses [Cloudflare](https://github.com/caddy-dns/cloudflare) Caddy DNS plugin to automatically build a packaged container on a new release of Caddy.
 
 ## Usage
 
