@@ -108,7 +108,13 @@ jobs:
           docker push ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }}
           docker push ghcr.io/callumau/caddy-cloudflare/caddy:latest
 
-      # 10. Update the Last Built Tag File
+      # 10. Set Up Git Authentication
+      - name: Set Up Git Authentication
+        if: env.new_release == 'true'
+        run: |
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+      # 11. Update the Last Built Tag File
       - name: Update Last Built Tag
         if: env.new_release == 'true'
         run: |
@@ -117,7 +123,7 @@ jobs:
           git commit -m "Update last_release_tag to ${{ env.latest_tag }}"
           git push origin HEAD:main # Replace 'main' with your default branch if different
 
-      # 11. Handle No New Release Scenario
+      # 12. Handle No New Release Scenario
       - name: No New Release Detected
         if: env.new_release != 'true'
         run: echo "No new release detected. Skipping build and push."
