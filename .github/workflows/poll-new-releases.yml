@@ -2,7 +2,7 @@ name: Build and Push Custom Caddy Container
 
 on:
   schedule:
-    - cron: "*/15 * * * *" # Runs every 15 minutes
+    - cron: "1 0 * * *" # Runs every 15 minutes
   workflow_dispatch: # Allows manual trigger
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
       - name: Compare Tags and Build New Image
         if: env.latest_tag != env.current_tag
         run: |
-          echo "New release detected: ${{ env.latest_tag }}"
+          echo "New release detected: ${{ env.latest_tag }}, old release $ {{ env.current_tag }}"
           docker build \
             --build-arg CADDY_VERSION=${{ env.latest_tag }} \
             -t ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }} \
