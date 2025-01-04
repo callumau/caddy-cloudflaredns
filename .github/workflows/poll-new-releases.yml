@@ -100,8 +100,8 @@ jobs:
           echo "Building Docker image with CADDY_VERSION=${{ env.latest_tag }}"
           docker build \
             --build-arg CADDY_VERSION=${{ env.latest_tag }} \
-            -t ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }} \
-            -t ghcr.io/callumau/caddy-cloudflare/caddy:latest .
+            -t ghcr.io/callumau/caddy-cloudflaredns/caddy:${{ env.latest_tag }} \
+            -t ghcr.io/callumau/caddy-cloudflaredns/caddy:latest .
 
       # 8. Log in to GHCR
       - name: Log in to GHCR
@@ -116,8 +116,8 @@ jobs:
       - name: Push New Image to GHCR
         if: env.new_release == 'true'
         run: |
-          docker push ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }}
-          docker push ghcr.io/callumau/caddy-cloudflare/caddy:latest
+          docker push ghcr.io/callumau/caddy-cloudflaredns/caddy:${{ env.latest_tag }}
+          docker push ghcr.io/callumau/caddy-cloudflaredns/caddy:latest
 
       # 10. Set Up Git Authentication
       - name: Set Up Git Authentication
