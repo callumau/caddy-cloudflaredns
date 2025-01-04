@@ -1,59 +1,50 @@
-name: Poll for New Releases
+name: Build and Push Custom Caddy Container
 
 on:
-  workflow_dispatch:
-    
+  workflow_dispatch: # Allows manual runs
 
 jobs:
-  poll-releases:
+  build-and-push-container:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Set up Repository Details
-        id: setup
-        run: |
-          echo "owner=caddyserver" >> $GITHUB_ENV
-          echo "repo=caddy" >> $GITHUB_ENV
-          echo "last_tag_file=.last_release_tag" >> $GITHUB_ENV
+      - name: Check Out Repository
+        uses: actions/checkout@v3
 
-      - name: Get Latest Release
-        id: get_release
+      - name: Fetch Latest Caddy Release
+        id: fetch_release
         run: |
-          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ env.owner }}/${{ env.repo }}/releases/latest")
-
-          echo "$response" > release.json
+          latest_release=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest)
+          echo "$latest_release" > release.json
           tag_name=$(jq -r '.tag_name' release.json)
+          echo "latest_tag=$tag_name" >> $GITHUB_ENV
 
-          echo "tag_name=$tag_name" >> $GITHUB_ENV
-          echo "release_name=$(jq -r '.name' release.json)" >> $GITHUB_ENV
-          echo "release_body=$(jq -r '.body' release.json)" >> $GITHUB_ENV
-
-      - name: Check for New Release
-        id: check_release
+      - name: Check Current Container Tag
+        id: check_current_tag
         run: |
-          if [ ! -f "${{ env.last_tag_file }}" ]; then
-            echo "No previous release found. Saving current tag."
-            echo "${{ env.tag_name }}" > ${{ env.last_tag_file }}
-            echo "new_release=false" >> $GITHUB_ENV
+          if ghcr_image=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"'); then
+            echo "current_tag=$ghcr_image" >> $GITHUB_ENV
           else
-            last_tag=$(cat ${{ env.last_tag_file }})
-            if [ "$last_tag" != "${{ env.tag_name }}" ]; then
-              echo "New release found: ${{ env.tag_name }}"
-              echo "${{ env.tag_name }}" > ${{ env.last_tag_file }}
-              echo "new_release=true" >> $GITHUB_ENV
-            else
-              echo "No new release."
-              echo "new_release=false" >> $GITHUB_ENV
-            fi
+            echo "current_tag=none" >> $GITHUB_ENV
           fi
 
-      - name: Handle New Release
-        if: steps.check_release.outputs.new_release == 'true'
+      - name: Compare Tags and Build New Image
+        if: env.latest_tag != env.current_tag
         run: |
-          echo "New release detected!"
-          echo "Release Tag: ${{ env.tag_name }}"
-          echo "Release Name: ${{ env.release_name }}"
-          echo "Release Body: ${{ env.release_body }}"
+          echo "New release detected: ${{ env.latest_tag }}"
+          docker build \
+            --build-arg CADDY_VERSION=${{ env.latest_tag }} \
+            -t ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }} \
+            -t ghcr.io/callumau/caddy-cloudflare/caddy:latest .
 
-      # Add any additional steps to handle the new release
+      - name: Push New Image to GHCR
+        if: env.latest_tag != env.current_tag
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u USERNAME --password-stdin
+          docker push ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }}
+          docker push ghcr.io/callumau/caddy-cloudflare/caddy:latest
+
+      - name: No New Release Detected
+        if: env.latest_tag == env.current_tag
+        run: echo "No new release detected. Skipping build and push."
