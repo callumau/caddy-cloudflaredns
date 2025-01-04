@@ -3,7 +3,7 @@ name: Build and Push Custom Caddy Container
 on:
   schedule:
     - cron: "*/15 * * * *" # Runs every 15 minutes
-  workflow_dispatch: # Allows manual runs
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   build-and-push-container:
@@ -12,18 +12,6 @@ jobs:
     steps:
       - name: Check Out Repository
         uses: actions/checkout@v3
-
-      - name: Ensure Dockerfile Exists
-        id: check_dockerfile
-        run: |
-          if [ ! -f "Dockerfile" ]; then
-            echo "Dockerfile does not exist. Creating a default one."
-            cat <<EOF > Dockerfile
-            FROM caddy:${CADDY_VERSION}
-            # Add custom configuration or plugins if needed
-            COPY Caddyfile /etc/caddy/Caddyfile
-            EOF
-          fi
 
       - name: Fetch Latest Caddy Release
         id: fetch_release
@@ -37,9 +25,9 @@ jobs:
         id: check_current_tag
         run: |
           if curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"' > /dev/null 2>&1; then
+            https://ghcr.io/v2/OWNER/REPO/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"' > /dev/null 2>&1; then
             current_tag=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              https://ghcr.io/v2/callumau/caddy-cloudflare/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"')
+              https://ghcr.io/v2/OWNER/REPO/caddy/manifests/latest | jq -r '.annotations."org.opencontainers.image.version"')
           else
             current_tag="none"
           fi
@@ -51,15 +39,15 @@ jobs:
           echo "New release detected: ${{ env.latest_tag }}"
           docker build \
             --build-arg CADDY_VERSION=${{ env.latest_tag }} \
-            -t ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }} \
-            -t ghcr.io/callumau/caddy-cloudflare/caddy:latest .
+            -t ghcr.io/OWNER/REPO/caddy:${{ env.latest_tag }} \
+            -t ghcr.io/OWNER/REPO/caddy:latest .
 
       - name: Push New Image to GHCR
         if: env.latest_tag != env.current_tag
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u USERNAME --password-stdin
-          docker push ghcr.io/callumau/caddy-cloudflare/caddy:${{ env.latest_tag }}
-          docker push ghcr.io/callumau/caddy-cloudflare/caddy:latest
+          docker push ghcr.io/OWNER/REPO/caddy:${{ env.latest_tag }}
+          docker push ghcr.io/OWNER/REPO/caddy:latest
 
       - name: No New Release Detected
         if: env.latest_tag == env.current_tag
