@@ -1,4 +1,4 @@
-# Caddy + Cloudflare DNS Validation
+# Caddy + Cloudflare DNS Certificate Validation
 
 Uses Github actions to automatically build a packaged container on a new release of Caddy with [Cloudflare](https://github.com/caddy-dns/cloudflare) Caddy DNS plugin.
 
