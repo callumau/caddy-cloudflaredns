@@ -1,11 +1,11 @@
-ARG CADDY_VERSION
+FROM golang:alpine AS builder
 
-# Stage 1: Build Caddy with the Cloudflare DNS plugin
-FROM caddy:builder AS builder
+# Install xcaddy
+RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 RUN xcaddy build --with github.com/caddy-dns/cloudflare
 
 # Stage 2: Final image
 FROM caddy:${CADDY_VERSION}
 
-COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+COPY --from=builder /go/bin/caddy /usr/bin/caddy

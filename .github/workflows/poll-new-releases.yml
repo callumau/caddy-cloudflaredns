@@ -1,153 +1,125 @@
-name: Build and Push Custom Caddy Container
+name: Daily Security & Update Check
 
 on:
   schedule:
-    - cron: "1 0 * * *" # Runs once a day
-  workflow_dispatch: # Allows manual trigger
+    - cron: '0 3 * * *' # Run daily at 3am
+  workflow_dispatch:    # Allow manual run
 
-permissions:
-  contents: write # Needed to commit changes
-  packages: write # Needed to push to GHCR
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push-container:
+  check-and-decide:
     runs-on: ubuntu-latest
-
+    outputs:
+      should_build: ${{ steps.decision.outputs.rebuild }}
+      version: ${{ steps.check_version.outputs.latest_version }}
     steps:
-      # 1. Check Out Repository
-      - name: Check Out Repository
+      - name: Checkout Code
         uses: actions/checkout@v3
+
+      # 1. Get the current version from your local file
+      - name: Read Local Version
+        id: local_version
+        run: |
+          if [ -f .last_release_tag ]; then
+            echo "current=$(cat .last_release_tag)" >> $GITHUB_OUTPUT
+          else
+            echo "current=0.0.0" >> $GITHUB_OUTPUT
+          fi
+
+      # 2. Get the upstream version from GitHub API
+      - name: Check Upstream Version
+        id: check_version
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
+          # Strip 'v' prefix for cleaner comparison (e.g., v2.7.5 -> 2.7.5)
+          CLEAN_TAG="${LATEST_TAG#v}"
+          echo "latest_version=$CLEAN_TAG" >> $GITHUB_OUTPUT
+          echo "Upstream is: $CLEAN_TAG"
+
+      # 3. Check for Vulnerabilities in your CURRENT image
+      - name: Run Trivy Vulnerability Scanner
+        id: trivy
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
         with:
-          persist-credentials: false # Prevents default GITHUB_TOKEN from being used for push
-          fetch-depth: 0 # Fetch all history for git commands
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest'
+          format: 'table'
+          exit-code: '1' # This sets the step outcome to failure if vulns are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
-      # 2. Set Up Git for Committing
-      - name: Set Up Git
+      # 4. Make the Decision
+      - name: Decide
+        id: decision
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          LOCAL="${{ steps.local_version.outputs.current }}"
+          UPSTREAM="${{ steps.check_version.outputs.latest_version }}"
+          TRIVY_STATUS="${{ steps.trivy.outcome }}"
 
-      # 3. Fetch Latest Caddy Release
-      - name: Fetch Latest Caddy Release
-        id: fetch_release
-        run: |
-          # Fetch the latest release from Caddy
-          latest_release=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest)
-          echo "$latest_release" > release.json
+          echo "Local: $LOCAL | Upstream: $UPSTREAM | Trivy Status: $TRIVY_STATUS"
 
-          # Extract the prerelease status
-          is_prerelease=$(jq -r '.prerelease' release.json)
-          echo "is_prerelease=$is_prerelease" >> $GITHUB_ENV
-      
-          if [ "$is_prerelease" = "true" ]; then
-            echo "The latest release is a pre-release. Skipping build and push."
-            echo "new_release=false" >> $GITHUB_ENV
-            exit 0
-          fi
-
-          # Extract the raw tag (e.g., "v2.9.0")
-          raw_tag=$(jq -r '.tag_name' release.json)
-          echo "Raw tag: $raw_tag"
-
-          # Process the tag: remove 'v' and strip trailing '.0' if present
-          processed_tag=$(echo "$raw_tag" | sed -E 's/^v//; s/\.0$//')
-          echo "Processed tag: $processed_tag"
-
-          # Validate that the processed tag is not empty
-          if [[ -z "$processed_tag" ]]; then
-            echo "Error: Processed tag is empty."
-            exit 1
-          fi
-
-          # Export the processed tag to an environment variable
-          echo "latest_tag=$processed_tag" >> $GITHUB_ENV
-
-      # 4. Read Last Built Tag
-      - name: Read Last Built Tag
-        id: read_last_tag
-        run: |
-          if [ -f ".last_release_tag" ]; then
-            last_tag=$(cat .last_release_tag)
-            echo "Last built tag: $last_tag"
-            echo "last_tag=$last_tag" >> $GITHUB_ENV
+          if [ "$LOCAL" != "$UPSTREAM" ]; then
+            echo "New Caddy version detected."
+            echo "rebuild=true" >> $GITHUB_OUTPUT
+          elif [ "$TRIVY_STATUS" == "failure" ]; then
+            echo "Vulnerabilities found. Rebuild required."
+            echo "rebuild=true" >> $GITHUB_OUTPUT
           else
-            echo "Last built tag not found."
-            echo "last_tag=" >> $GITHUB_ENV
+            echo "System clean and up to date."
+            echo "rebuild=false" >> $GITHUB_OUTPUT
           fi
 
-      # 5. Compare Tags to Determine if a New Release Exists
-      - name: Compare Tags
-        id: compare_tags
-        run: |
-          if [ "${{ env.latest_tag }}" != "${{ env.last_tag }}" ]; then
-            echo "new_release=true" >> $GITHUB_ENV
-          else
-            echo "new_release=false" >> $GITHUB_ENV
-          fi
+  build-push-update:
+    needs: check-and-decide
+    if: needs.check-and-decide.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # REQUIRED to commit the tag file back
+      packages: write # REQUIRED to push to GHCR
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      # 6. Debugging Information (Optional)
-      - name: Debug Tags
-        run: |
-          echo "Latest tag: ${{ env.latest_tag }}"
-          echo "Last built tag: ${{ env.last_tag }}"
-          echo "New release: ${{ env.new_release }}"
-          echo "Is pre-release: ${{ env.is_prerelease }}"
-
-      # 7. Build the Docker Image if a New Release is Detected
-      - name: Build New Image
-        if: env.new_release == 'true'
-        run: |
-          echo "Building Docker image with CADDY_VERSION=${{ env.latest_tag }}"
-          docker build \
-            --build-arg CADDY_VERSION=${{ env.latest_tag }} \
-            -t ghcr.io/callumau/caddy-cloudflaredns/caddy:${{ env.latest_tag }} \
-            -t ghcr.io/callumau/caddy-cloudflaredns/caddy:latest .
-
-      # 8. Log in to GHCR
-      - name: Log in to GHCR
-        if: env.new_release == 'true'
+      - name: Log in to the Container registry
         uses: docker/login-action@v2
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }} # Use GHCR_PAT if using a PAT
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 9. Push the Docker Image to GHCR
-      - name: Push New Image to GHCR
-        if: env.new_release == 'true'
-        run: |
-          docker push ghcr.io/callumau/caddy-cloudflaredns/caddy:${{ env.latest_tag }}
-          docker push ghcr.io/callumau/caddy-cloudflaredns/caddy:latest
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-      # 10. Set Up Git Authentication
-      - name: Set Up Git Authentication
-        if: env.new_release == 'true'
-        run: |
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+      # Rebuilds using the Dockerfile (pulling latest Go)
+      - name: Build and Push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          pull: true
+          no-cache: true # Ensure we don't use old cached layers with old Go
 
-      # 11. Update the Last Built Tag File
-      - name: Update Last Built Tag
-        if: env.new_release == 'true'
+      # Update the tracking file and commit it back to the repo
+      - name: Update Release Tag File
         run: |
-          echo "${{ env.latest_tag }}" > .last_release_tag
+          NEW_VER="${{ needs.check-and-decide.outputs.version }}"
+          echo "$NEW_VER" > .last_release_tag
+          
+          # Git configuration
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Commit and Push
           git add .last_release_tag
-          git commit -m "Update last_release_tag to ${{ env.latest_tag }}"
-          git push origin HEAD:main # Replace 'main' with your default branch if different
-
-      # 12. Handle No New Release Scenario
-      - name: No New Release Detected
-        if: env.new_release != 'true'
-        run: echo "No new release detected. Skipping build and push."
-
-  keepalive:
-    name: ⏱️ Keep Repository Alive
-    runs-on: ubuntu-latest
-    needs: build-and-push-container
-    if: ${{ always() }}
-    permissions:
-      actions: write      # needed for the API ping
-      contents: write     # only for dummy commits (API mode doesn’t use this)
-    steps:
-      - uses: actions/checkout@v4
-      - uses: gautamkrishnar/keepalive-workflow@v2
-        # (defaults to API mode, will ping GitHub if last commit >45 days)
+          # Only commit if there are changes (avoids error if we rebuilt just for vulns but version is same)
+          if git diff --staged --quiet; then
+            echo "No changes to tag file (version matched, just a vuln fix)."
+          else
+            git commit -m "chore: update caddy version to $NEW_VER [skip ci]"
+            git push
+          fi
