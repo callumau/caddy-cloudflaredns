@@ -102,7 +102,10 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           pull: true
-          no-cache: true # Ensure we don't use old cached layers with old Go
+          no-cache: true
+          # PASS THE DETECTED VERSION HERE
+          build-args: |
+            CADDY_VERSION=${{ needs.check-and-decide.outputs.version }}
 
       # Update the tracking file and commit it back to the repo
       - name: Update Release Tag File

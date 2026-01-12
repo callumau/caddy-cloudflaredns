@@ -1,11 +1,15 @@
 FROM golang:alpine AS builder
 
-# Install xcaddy
+
+ARG CADDY_VERSION
+
+
+RUN apk add --no-cache git
 RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
-RUN xcaddy build --with github.com/caddy-dns/cloudflare
+RUN xcaddy build v${CADDY_VERSION} \
+    --with github.com/caddy-dns/cloudflare
 
-# Stage 2: Final image
-FROM caddy:${CADDY_VERSION}
+FROM caddy:${CADDY_VERSION}-alpine
 
 COPY --from=builder /go/bin/caddy /usr/bin/caddy
