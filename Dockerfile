@@ -2,6 +2,7 @@ ARG CADDY_VERSION
 
 FROM golang:alpine AS builder
 
+ARG CADDY_VERSION
 
 RUN apk add --no-cache git
 RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
