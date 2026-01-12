@@ -103,7 +103,6 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           pull: true
           no-cache: true
-          # PASS THE DETECTED VERSION HERE
           build-args: |
             CADDY_VERSION=${{ needs.check-and-decide.outputs.version }}
 

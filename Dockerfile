@@ -1,7 +1,6 @@
-FROM golang:alpine AS builder
-
-
 ARG CADDY_VERSION
+
+FROM golang:alpine AS builder
 
 
 RUN apk add --no-cache git
