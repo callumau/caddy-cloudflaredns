@@ -1,140 +1,64 @@
-name: Daily Security & Update Check
+name: Update Caddy
 
 on:
   schedule:
-    - cron: '0 3 * * *' # Run daily at 3am
-  workflow_dispatch:    # Allow manual run
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+    - cron: '0 * * * *' # Check hourly
+  workflow_dispatch:      # Allow manual runs
 
 jobs:
-  check-and-decide:
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.decision.outputs.rebuild }}
-      version: ${{ steps.check_version.outputs.latest_version }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      # 1. Get the current version from your local file
-      - name: Read Local Version
-        id: local_version
-        run: |
-          if [ -f .last_release_tag ]; then
-            echo "current=$(cat .last_release_tag)" >> $GITHUB_OUTPUT
-          else
-            echo "current=0.0.0" >> $GITHUB_OUTPUT
-          fi
-
-      # 2. Get the upstream version from GitHub API
-      - name: Check Upstream Version
-        id: check_version
-        run: |
-          LATEST_TAG=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
-          # Strip 'v' prefix for cleaner comparison (e.g., v2.7.5 -> 2.7.5)
-          CLEAN_TAG="${LATEST_TAG#v}"
-          echo "latest_version=$CLEAN_TAG" >> $GITHUB_OUTPUT
-          echo "Upstream is: $CLEAN_TAG"
-
-      # 3. Check for Vulnerabilities in your CURRENT image
-      - name: Run Trivy Vulnerability Scanner
-        id: trivy
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true
-        with:
-          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest'
-          format: 'table'
-          exit-code: '1' # This sets the step outcome to failure if vulns are found
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-
-      # 4. Make the Decision
-      - name: Decide
-        id: decision
-        run: |
-          LOCAL="${{ steps.local_version.outputs.current }}"
-          UPSTREAM="${{ steps.check_version.outputs.latest_version }}"
-          TRIVY_STATUS="${{ steps.trivy.outcome }}"
-
-          echo "Local: $LOCAL | Upstream: $UPSTREAM | Trivy Status: $TRIVY_STATUS"
-
-          if [ "$LOCAL" != "$UPSTREAM" ]; then
-            echo "New Caddy version detected."
-            echo "rebuild=true" >> $GITHUB_OUTPUT
-          elif [ "$TRIVY_STATUS" == "failure" ]; then
-            echo "Vulnerabilities found. Rebuild required."
-            echo "rebuild=true" >> $GITHUB_OUTPUT
-          else
-            echo "System clean and up to date."
-            echo "rebuild=false" >> $GITHUB_OUTPUT
-          fi
-
-  build-push-update:
-    needs: check-and-decide
-    if: needs.check-and-decide.outputs.should_build == 'true'
+  check-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # --- DEBUG STEP: Verify what we are about to use ---
-      - name: Verify Version
+      - name: Check for new Caddy release
+        id: caddy
         run: |
-          VERSION="${{ needs.check-and-decide.outputs.version }}"
-          echo "Received Version: [$VERSION]"
+          LATEST=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name | sed 's/^v//')
+          CURRENT=$(cat .last_release_tag 2>/dev/null || echo "0.0.0")
           
-          if [ -z "$VERSION" ]; then
-            echo "ERROR: Version is empty! Defaulting to 2.9.1"
-            echo "FINAL_VERSION=2.9.1" >> $GITHUB_ENV
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "version=$LATEST" >> $GITHUB_OUTPUT
+            echo "Updating from $CURRENT to $LATEST"
           else
-            echo "FINAL_VERSION=$VERSION" >> $GITHUB_ENV
+            echo "No new version found (current: $CURRENT)"
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        if: steps.caddy.outputs.version
+        uses: docker/setup-buildx-action@v3
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
+      - name: Login to GHCR
+        if: steps.caddy.outputs.version
+        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push
-        uses: docker/build-push-action@v4
+      - name: Build and push
+        if: steps.caddy.outputs.version
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          pull: true
-          no-cache: true
-          # Use the environment variable we sanitized above
-          build-args: |
-            CADDY_VERSION=${{ env.FINAL_VERSION }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.caddy.outputs.version }}
+          build-args: CADDY_VERSION=${{ steps.caddy.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # Update the tracking file and commit it back to the repo
-      - name: Update Release Tag File
+      - name: Update version record
+        if: steps.caddy.outputs.version
         run: |
-          NEW_VER="${{ needs.check-and-decide.outputs.version }}"
-          echo "$NEW_VER" > .last_release_tag
-          
-          # Git configuration
+          echo "${{ steps.caddy.outputs.version }}" > .last_release_tag
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Commit and Push
           git add .last_release_tag
-          # Only commit if there are changes (avoids error if we rebuilt just for vulns but version is same)
-          if git diff --staged --quiet; then
-            echo "No changes to tag file (version matched, just a vuln fix)."
-          else
-            git commit -m "chore: update caddy version to $NEW_VER [skip ci]"
-            git push
-          fi
+          git commit -m "chore: bump caddy to ${{ steps.caddy.outputs.version }} [skip ci]"
+          git push
