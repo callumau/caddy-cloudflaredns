@@ -2,7 +2,7 @@ name: Update Caddy
 
 on:
   schedule:
-    - cron: '0 * * * *' # Check hourly
+    - cron: '0 3 * * *' # Check daily at 3am
   workflow_dispatch:      # Allow manual runs
 
 jobs:
@@ -39,6 +39,43 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build for testing
+        if: steps.caddy.outputs.version
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: caddy-test:${{ steps.caddy.outputs.version }}
+          build-args: CADDY_VERSION=${{ steps.caddy.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test image
+        if: steps.caddy.outputs.version
+        run: |
+          # Create test config
+          echo ':8080 {
+              respond "Hello World!"
+          }' > Caddyfile.test
+
+          # Run container
+          docker run -d -p 8080:8080 -v $(pwd)/Caddyfile.test:/etc/caddy/Caddyfile --name caddy-test caddy-test:${{ steps.caddy.outputs.version }}
+          
+          # Wait for startup
+          sleep 5
+          
+          # Test endpoint
+          response=$(curl -s http://localhost:8080)
+          if [ "$response" != "Hello World!" ]; then
+            echo "Test failed! Expected 'Hello World!', got '$response'"
+            docker logs caddy-test
+            exit 1
+          fi
+          
+          echo "Test passed!"
+          docker rm -f caddy-test
+          rm Caddyfile.test
 
       - name: Build and push
         if: steps.caddy.outputs.version
