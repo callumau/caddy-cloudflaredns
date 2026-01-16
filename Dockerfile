@@ -50,8 +50,8 @@ COPY --from=builder --chown=caddy:caddy /config /config
 COPY --from=builder --chown=caddy:caddy /data /data
 
 # Set environment variables for Caddy
-ENV XDG_CONFIG_HOME /config
-ENV XDG_DATA_HOME /data
+ENV XDG_CONFIG_HOME=/config
+ENV XDG_DATA_HOME=/data
 
 # Define volumes for data persistence
 VOLUME /config

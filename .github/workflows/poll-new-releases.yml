@@ -18,7 +18,15 @@ jobs:
       - name: Check for new Caddy release
         id: caddy
         run: |
-          LATEST=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name | sed 's/^v//')
+          # Fetch latest release tag
+          RAW_TAG=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
+          
+          if [ "$RAW_TAG" = "null" ] || [ -z "$RAW_TAG" ]; then
+            echo "Error: Failed to fetch latest Caddy version. Rate limit or API error."
+            exit 1
+          fi
+          
+          LATEST=$(echo "$RAW_TAG" | sed 's/^v//')
           CURRENT=$(cat .last_release_tag 2>/dev/null || echo "0.0.0")
           
           if [ "$LATEST" != "$CURRENT" ]; then
